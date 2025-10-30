@@ -1,0 +1,8 @@
+README.md
+setup.py
+src/minilang.egg-info/PKG-INFO
+src/minilang.egg-info/SOURCES.txt
+src/minilang.egg-info/dependency_links.txt
+src/minilang.egg-info/entry_points.txt
+src/minilang.egg-info/requires.txt
+src/minilang.egg-info/top_level.txt

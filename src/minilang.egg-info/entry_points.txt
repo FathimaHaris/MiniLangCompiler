@@ -1,0 +1,2 @@
+[console_scripts]
+minilang = cli:main
