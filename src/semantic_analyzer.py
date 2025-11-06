@@ -95,6 +95,16 @@ fn main(): int {
     parser = Parser(tokens)
     ast = parser.parse()
 
-    analyzer = SemanticAnalyzer(ast)
-    analyzer.analyze()
+    # analyzer = SemanticAnalyzer(ast)
+    # analyzer.analyze()
+
+
+
+
+    try:
+        SemanticAnalyzer(ast).analyze()
+    except SemanticError as e:
+        print(f"Semantic Error: {e}")
+        exit(1)
+    
     print("✅ Semantic analysis passed!")
