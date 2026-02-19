@@ -1,23 +1,22 @@
 import re
 from typing import NamedTuple, List
 
-# Define the structure of a token
 class Token(NamedTuple):
     type: str
     value: str
     line: int
     column: int
 
-# Reserved keywords in MiniLang
 KEYWORDS = {
-    "fn", "return", "if", "else", "while", "int", "float", "print"
+    "fn", "return", "if", "else", "while",
+    "int", "float", "bool", "string", "print", "true", "false"
 }
 
-# Token specification using regex
 TOKEN_SPEC = [
-    ("NUMBER",   r"\d+(\.\d+)?"),      # Integer or float
-    ("IDENT",    r"[A-Za-z_][A-Za-z0-9_]*"),  # Identifiers
-    ("OP",       r"[+\-*/=<>!]+"),     # Operators
+    ("NUMBER",   r"\d+(\.\d+)?"),
+    ("STRING",   r'"([^"\\]|\\.)*"'),
+    ("IDENT",    r"[A-Za-z_][A-Za-z0-9_]*"),
+    ("OP",       r"[+\-*/=<>!]+"),
     ("LPAREN",   r"\("),
     ("RPAREN",   r"\)"),
     ("LBRACE",   r"\{"),
@@ -26,15 +25,13 @@ TOKEN_SPEC = [
     ("COMMA",    r","),
     ("SEMICOLON",r";"),
     ("NEWLINE",  r"\n"),
-    ("SKIP",     r"[ \t]+"),           # Skip spaces and tabs
-    ("MISMATCH", r"."),                # Any other character
+    ("SKIP",     r"[ \t]+"),
+    ("MISMATCH", r"."),
 ]
 
-# Combine into one big regex
 token_re = re.compile("|".join(f"(?P<{name}>{pattern})" for name, pattern in TOKEN_SPEC))
 
 def lex(code: str) -> List[Token]:
-    """Tokenize MiniLang source code."""
     tokens = []
     line_num = 1
     line_start = 0
@@ -45,6 +42,9 @@ def lex(code: str) -> List[Token]:
         column = mo.start() - line_start
 
         if kind == "NUMBER":
+            tokens.append(Token(kind, value, line_num, column))
+        elif kind == "STRING":
+            value = value[1:-1]  # remove quotes
             tokens.append(Token(kind, value, line_num, column))
         elif kind == "IDENT":
             if value in KEYWORDS:
@@ -63,17 +63,14 @@ def lex(code: str) -> List[Token]:
     return tokens
 
 if __name__ == "__main__":
-    # Example program to test
-    code = """
-fn factorial(n:int): int {
-        result = 1;
-        while (n > 1) {
-            result = result * n;
-            n = n - 1;
-        }
-        return result;
+    code = '''
+fn main(): int {
+    x: int = 42;
+    y: string = "hello world";
+    flag: bool = true;
+    print(y);
+    return 0;
 }
-    """
-    toks = lex(code)
-    for t in toks:
+    '''
+    for t in lex(code):
         print(t)

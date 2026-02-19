@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import List, Optional
 from lexer import Token, lex
+from typing import NamedTuple
 
 # ============================================================
 #  CUSTOM COMPILER ERROR HANDLER (COLORED, NO TRACEBACK)
@@ -56,11 +57,18 @@ class Stmt: pass
 @dataclass
 class VarAssign(Stmt):
     name: str
+    type_: Optional[str] 
     value: "Expr"
+
+class VarDecl(NamedTuple):
+    name: str
+    type_: str
+
+
 
 @dataclass
 class ReturnStmt(Stmt):
-    value: "Expr"
+    value: Optional["Expr"] = None
 
 @dataclass
 class PrintStmt(Stmt):
@@ -84,6 +92,22 @@ class Var(Expr):
     name: str
 
 
+@dataclass
+class StringLiteral(Expr):
+    value: str
+
+@dataclass
+class IfStmt(Stmt):
+    condition: "Expr"
+    then_branch: List["Stmt"]
+    else_branch: Optional[List["Stmt"]] = None
+
+@dataclass
+class WhileStmt(Stmt):
+    condition: "Expr"
+    body: List["Stmt"]
+
+
 # ============================================================
 #  PARSER IMPLEMENTATION
 # ============================================================
@@ -93,6 +117,7 @@ class Parser:
         self.tokens = tokens
         self.source_lines = source.splitlines()
         self.pos = 0
+        self.symbols = {}  # Keep track of declared variables
 
     def get_line(self, line_num: int) -> str:
         if 1 <= line_num <= len(self.source_lines):
@@ -104,6 +129,13 @@ class Parser:
 
     def advance(self):
         self.pos += 1
+
+    def peek(self, offset=1):
+        """Look ahead by `offset` tokens without advancing."""
+        if self.pos + offset < len(self.tokens):
+            return self.tokens[self.pos + offset]
+        return None
+
 
     def expect(self, type_: str):
         tok = self.current()
@@ -144,24 +176,36 @@ class Parser:
             params = []
 
         self.expect("RPAREN")
-        self.expect("COLON")
 
-        tok = self.current()
-        if tok is None:
-            raise MiniLangSyntaxError("Unexpected end of input after ':' (expected return type)")
-
-        if tok.type in ( "INT", "TYPE"):
-            ret_type = tok.value
+        # ---- Optional return type ----
+        if self.current() and self.current().type == "COLON":
             self.advance()
-        else:
-            line_text = self.get_line(tok.line)
-            raise MiniLangSyntaxError(
-                f"Expected type name but got '{tok.value}'",
-                line=tok.line,
-                column=tok.column,
-                line_text=line_text
-            )
+            tok = self.current()
 
+            if tok is None:
+                raise MiniLangSyntaxError("Unexpected end of input after ':' (expected return type)")
+
+            # Accept any valid type name
+            if tok.type in ("INT", "FLOAT", "BOOL", "STRING", "VOID"):
+                ret_type = tok.value
+                self.advance()
+            elif tok.type == "IDENT":
+                # Allow user-defined types later (e.g., struct names)
+                ret_type = tok.value
+                self.advance()
+            else:
+                line_text = self.get_line(tok.line)
+                raise MiniLangSyntaxError(
+                    f"Expected type name but got '{tok.value}'",
+                    line=tok.line,
+                    column=tok.column,
+                    line_text=line_text
+                )
+        else:
+            # No type declared — default to void
+            ret_type = "void"
+
+        # ---- Function body ----
         body = self.block()
         return Function(name, params, ret_type, body)
 
@@ -186,43 +230,169 @@ class Parser:
             stmts.append(self.statement())
         self.expect("RBRACE")
         return stmts
+    
 
-    def statement(self) -> "Stmt":
+    def return_stmt(self):
+        self.expect("RETURN")
+        # allow both `return;` and `return <expr>;`
+        if self.current() and self.current().type != "SEMICOLON":
+            value = self.expression()
+        else:
+            value = None
+        self.expect("SEMICOLON")
+        return ReturnStmt(value)
+
+
+
+
+    def print_stmt(self):
+        self.expect("PRINT")
+        self.expect("LPAREN")
+        value = self.expression()
+        self.expect("RPAREN")
+        self.expect("SEMICOLON")
+        return PrintStmt(value)
+    
+
+    def statement(self):
         tok = self.current()
 
+        if tok is None:
+            return None
+
         if tok.type == "RETURN":
-            self.advance()
-            value = self.expression()
-            self.expect("SEMICOLON")
-            return ReturnStmt(value)
-
+            return self.return_stmt()
+        
         elif tok.type == "PRINT":
-            self.advance()
-            self.expect("LPAREN")
-            value = self.expression()
-            self.expect("RPAREN")
-            self.expect("SEMICOLON")
-            return PrintStmt(value)
-
+            return self.print_stmt()
+        
+        elif tok.type == "IF":
+            return self.if_stmt()
+        
+        elif tok.type == "WHILE":
+            return self.while_stmt()
+        
         elif tok.type == "IDENT":
-            name = tok.value
-            self.advance()
-            self.expect("OP")
-            value = self.expression()
-            self.expect("SEMICOLON")
-            return VarAssign(name, value)
-
+            # Could be variable assignment or function call
+            next_tok = self.peek()
+            if next_tok and next_tok.type in ("COLON", "OP", "LPAREN"):
+                return self.var_assign_or_call()
+            else:
+                raise MiniLangSyntaxError(f"Unexpected token {tok.value}")
         else:
             line_text = self.get_line(tok.line)
             raise MiniLangSyntaxError(
-                f"Unexpected token '{tok.value}'",
+                f"Unexpected statement start: '{tok.value}'",
                 line=tok.line,
                 column=tok.column,
                 line_text=line_text
             )
 
+
+
+    def if_stmt(self):
+
+        self.expect("IF")
+        self.expect("LPAREN")
+        condition = self.expression()
+        self.expect("RPAREN")
+
+        then_branch = self.block()
+        else_branch = None
+
+        if self.current() and self.current().type == "ELSE":
+            self.advance()
+            else_branch = self.block()
+
+        return IfStmt(condition, then_branch, else_branch)
+    
+    def while_stmt(self):
+
+        self.expect("WHILE")
+        self.expect("LPAREN")
+        condition = self.expression()
+        self.expect("RPAREN")
+        body = self.block()
+        return WhileStmt(condition, body)
+
+
+
+
+    def var_assign_or_call(self):
+        name_token = self.expect("IDENT")
+        name = name_token.value
+
+        var_type = None
+        # Case 1: optional declaration
+        if self.current() and self.current().type == "COLON":
+            self.advance()
+            type_tok = self.current()
+            if type_tok.type in ("INT", "FLOAT", "BOOL", "STRING"):
+                var_type = type_tok.value
+                self.advance()
+                self.symbols[name] = var_type  # register declared variable
+            else:
+                raise MiniLangSyntaxError(f"Invalid type: {type_tok.value}")
+
+            # Pure declaration: z:int;
+            if self.current() and self.current().type == "SEMICOLON":
+                self.advance()
+                return VarDecl(name, var_type)
+
+        # Case 2: assignment (must be declared)
+        if self.current() and self.current().type == "OP" and self.current().value == "=":
+            # check if variable exists
+            if var_type is None and name not in self.symbols:
+                raise MiniLangSyntaxError(
+                    f"Variable '{name}' is not declared before assignment",
+                    line=name_token.line,
+                    column=name_token.column,
+                    line_text=self.get_line(name_token.line)
+                )
+
+            self.advance()
+            value = self.expression()
+            self.expect("SEMICOLON")
+
+            # If this is an assignment after declaration, use recorded type
+            if var_type is None:
+                var_type = self.symbols[name]
+
+            return VarAssign(name, var_type, value)
+
+        # Case 3: function call
+        elif self.current() and self.current().type == "LPAREN":
+            args = self.arguments()
+            self.expect("SEMICOLON")
+            return FunctionCall(name, args)
+
+        # Case 4: declaration only
+        elif var_type is not None:
+            self.expect("SEMICOLON")
+            return VarDecl(name, var_type)
+
+        else:
+            raise MiniLangSyntaxError(f"Unexpected token after identifier '{name}'")
+
+
+    
+    
     # ---- Expressions ----
+
     def expression(self) -> "Expr":
+        return self.comparison()
+    
+    def comparison(self) -> "Expr":
+        left = self.term_expr()
+        while self.current() and self.current().value in {"<", ">", "<=", ">=", "==", "!="}:
+            op = self.current().value
+            self.advance()
+            right = self.term_expr()
+            left = BinaryOp(op, left, right)
+        return left
+    
+
+    def term_expr(self) -> "Expr":
         left = self.term()
         while self.current() and self.current().value in {"+", "-"}:
             op = self.current().value
@@ -246,14 +416,21 @@ class Parser:
         if tok.type == "NUMBER":
             self.advance()
             return Number(tok.value)
+        
+        elif tok.type == "STRING":
+            self.advance()
+            return StringLiteral(tok.value)
+
         elif tok.type == "IDENT":
             self.advance()
             return Var(tok.value)
+        
         elif tok.type == "LPAREN":
             self.advance()
             expr = self.expression()
             self.expect("RPAREN")
             return expr
+        
         else:
             line_text = self.get_line(tok.line)
             raise MiniLangSyntaxError(
@@ -288,13 +465,15 @@ def pretty_print(node, indent=0):
 
 if __name__ == "__main__":
     code = """
-fn main():int
-{
-        x = 5;
-        y = x + 10;
-        print(y);
-        return 0;
+fn main(): int {
+    x: int = 5;
+    y: int = 10;
+    z: int;
+    z = x + y;
+    print(z);  
+    return 0;
 }
+
     """
 
     try:
